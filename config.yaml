@@ -1,0 +1,25 @@
+credential_list:
+  - credential_name: macbook-pro-lmstudio
+    credential_values:
+      # MagicDNS;
+      # tailscale sidecar has accept-dns enabled, resolves via 100.100.100.100
+      api_base: http://jacks-macbook-pro.tailnet.ts.net:1234/v1
+      # LM Studio's local server API key (Developer tab in LM Studio); set this
+      # env var on the litellm service
+      api_key: os.environ/MACBOOK_PRO_LMSTUDIO_KEY
+    credential_info:
+      description: LM Studio on jacks-macbook-pro, reached over Tailscale
+
+model_list:
+    # name clients call against the proxy
+  - model_name: qwen3.6-35b-a3b 
+    litellm_params:
+      # "lm_studio/" prefix already encodes the provider, don't also set
+      # custom_llm_provider (double-prefixes)
+      model: lm_studio/qwen/qwen3.6-35b-a3b
+      # pulls api_base/api_key from credential_list above
+      # don't also set them inline here
+      litellm_credential_name: macbook-pro-lmstudio
+
+litellm_settings:
+  drop_params: true

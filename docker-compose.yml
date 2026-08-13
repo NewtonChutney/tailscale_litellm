@@ -1,0 +1,94 @@
+# LiteLLM quickstart stack: the gateway plus a Postgres database that stores
+# models, virtual keys, and spend logs. Used by https://docs.litellm.ai/docs/proxy/docker_quick_start
+#
+# Start it directly:
+#   curl -sSL https://docs.litellm.ai/docker-compose.yml | docker compose -f - up -d
+#
+# LITELLM_MASTER_KEY and LITELLM_SALT_KEY live in .env (see .env.example).
+# LITELLM_SALT_KEY encrypts credentials already stored in the `db` volume
+# (e.g. the LM Studio credential below) -- once real models/credentials
+# exist, changing its value makes them undecryptable. Set both to long
+# random values before any real use, and pin the image to a release tag
+# instead of `latest`.
+services:
+  tailscale:
+    image: docker.io/tailscale/tailscale:latest
+    hostname: litellm-tailscale
+    env_file:
+      - .env
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      # containerboot defaults to userspace networking even when a tun
+      # device is present; must be forced off for outbound kernel routing
+      # to tailnet peers to work for processes sharing this netns.
+      TS_USERSPACE: "false"
+      # Enable MagicDNS so litellm (sharing this netns and its
+      # /etc/resolv.conf) can resolve *.ts.net names. `tailscale up` flags
+      # are sticky/persisted in the state store across restarts, so this
+      # must be explicit, not just "not disabled".
+      TS_EXTRA_ARGS: --accept-dns=true
+    # Rootless podman denies the TUNSETIFF ioctl even with
+    # cap_add: [net_admin, net_raw] + a passed-through /dev/net/tun device;
+    # kernel-mode Tailscale (needed so litellm, sharing this netns, can dial
+    # tailnet IPs directly) only works here with the container fully
+    # privileged.
+    privileged: true
+    volumes:
+      - ./tailscale-state:/var/lib/tailscale:Z,U
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "tailscale", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  litellm:
+    image: docker.litellm.ai/berriai/litellm-database:latest
+    command: ["--config", "/app/config.yaml"]
+    network_mode: service:tailscale
+    env_file:
+      - .env
+    environment:
+      # MagicDNS's 100.100.100.100 resolver (see the tailscale service's
+      # accept-dns) doesn't forward unmatched short names like `db`, and
+      # `network_mode: service:tailscale` means litellm's dns:/extra_hosts:
+      # compose directives are ignored (litellm doesn't own the network
+      # config, the tailscale service does) -- so `db` must be addressed by
+      # its static IP directly instead of by compose service name.
+      DATABASE_URL: postgresql://litellm:litellm@172.30.0.10:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro,Z
+    depends_on:
+      db:
+        condition: service_healthy
+      tailscale:
+        condition: service_healthy
+
+  db:
+    networks:
+      default:
+        ipv4_address: 172.30.0.10
+    image: postgres:16
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+      POSTGRES_DB: litellm
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

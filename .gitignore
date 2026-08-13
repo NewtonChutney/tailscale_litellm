@@ -1,0 +1,9 @@
+# Secrets: Tailscale authkey, LM Studio API key
+.env
+
+# Tailscale sidecar state: node private key, auth state, cached netmap, logs
+tailscale-state/
+
+# OS/editor cruft
+.DS_Store
+*.swp
