@@ -26,7 +26,13 @@ services:
       # /etc/resolv.conf) can resolve *.ts.net names. `tailscale up` flags
       # are sticky/persisted in the state store across restarts, so this
       # must be explicit, not just "not disabled".
-      TS_EXTRA_ARGS: --accept-dns=true
+      # netfilter-mode=off: we're a plain client node (no subnet routes, no
+      # exit-node), so we don't need tailscale managing iptables at all --
+      # and under this rootless-podman kernel, `iptables -t filter -N
+      # ts-input` reliably fails ("Table does not exist"), which reruns on
+      # every router reconfig (including the reconfig a network change
+      # triggers) and was implicated in disconnects not self-healing.
+      TS_EXTRA_ARGS: --accept-dns=true --netfilter-mode=off
     # Rootless podman denies the TUNSETIFF ioctl even with
     # cap_add: [net_admin, net_raw] + a passed-through /dev/net/tun device;
     # kernel-mode Tailscale (needed so litellm, sharing this netns, can dial
@@ -38,10 +44,23 @@ services:
     ports:
       - "4000:4000"
     healthcheck:
-      test: ["CMD", "tailscale", "status"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
+      # Plain `tailscale status` only proves the daemon is responding, not
+      # that it's actually connected -- it still exits 0 while logged out
+      # or stuck reconnecting after a network change. Check the real
+      # connection state instead, and self-heal by re-running `tailscale
+      # up` (idempotent against the existing authenticated state, safe to
+      # call repeatedly) whenever it's not truly Running+Online.
+      test:
+        - CMD-SHELL
+        - >
+          s=$$(tailscale status --json);
+          echo "$$s" | grep -q '"BackendState": "Running"' &&
+          echo "$$s" | grep -m1 -q '"Online": true'
+          || { tailscale up --accept-dns=true --netfilter-mode=off >/dev/null 2>&1 & exit 1; }
+      interval: 15s
+      timeout: 10s
+      retries: 4
+      start_period: 30s
     restart: unless-stopped
 
   litellm:
