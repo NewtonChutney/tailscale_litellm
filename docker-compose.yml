@@ -13,11 +13,15 @@
 services:
   tailscale:
     image: docker.io/tailscale/tailscale:latest
-    hostname: litellm-tailscale
+    hostname: litellm-${USER}
     env_file:
       - .env
     environment:
       TS_STATE_DIR: /var/lib/tailscale
+      # Explicit, not relying on containerboot's OS-hostname fallback
+      # (undocumented behavior) -- this is the documented env var
+      # containerboot reads to set the tailnet node's name.
+      TS_HOSTNAME: litellm-${USER}
       # containerboot defaults to userspace networking even when a tun
       # device is present; must be forced off for outbound kernel routing
       # to tailnet peers to work for processes sharing this netns.
