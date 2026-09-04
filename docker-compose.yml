@@ -69,6 +69,7 @@ services:
 
   litellm:
     image: docker.litellm.ai/berriai/litellm-database:latest
+    pull_policy: always
     command: ["--config", "/app/config.yaml"]
     network_mode: service:tailscale
     env_file:
